@@ -22,8 +22,7 @@ services:
     environment:
       POSTGRES_USER: barq_app
       POSTGRES_DB: barq_tasks
-      POSTGRES_PASSWORD: BarqLabOnly_7qN2vK8c
-    ports: ["127.0.0.1:15432:5432"]
+      POSTGRES_PASSWORD: BarqLabOnly_7qN2vK8d # Password misconfiguration with the postgres env
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
