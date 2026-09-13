@@ -4,6 +4,11 @@ x-app: &app
   init: true
   restart: "no"
   env_file: ./config/app.env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
   environment: &app-env
     APP_HOST: "0.0.0.0"
     APP_PORT: "8080"
