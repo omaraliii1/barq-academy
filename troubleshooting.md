@@ -50,4 +50,21 @@ backend]` instead of `[frontend]` only.
 - **Related commit:** d35ddcc, d3f7aa2.
 - **Remaining uncertainty:** none once retested; this was a config-only bug.
 
+---
+
+## Entry 3
+- **Symptom:** Redis-backed `/counter` resets to 0 after any redis container restart.
+- **Hypothesis:** Redis has no persistence enabled.
+- **Command or test:** compare the `redis` `command:` line in baseline vs. supplied requirement
+  ("configure Redis persistence where appropriate").
+- **Actual output:** baseline: `command: ["redis-server", "--save", "", "--appendonly", "no"]`.
+- **Root cause:** AOF persistence explicitly disabled and RDB snapshotting also disabled (`--save
+  ""`) - Redis was running fully in-memory with zero persistence.
+- **Fix:** changed to `--appendonly yes` (kept `--save ""` since AOF alone is sufficient for this
+  lab and avoids RDB's fork-based snapshot cost - see `decisions.md` #4).
+- **Retest evidence:**  hit `/counter` a few times, `docker compose restart
+  redis`, hit `/counter` again and confirm it continues from the prior value rather than resetting.
+- **Related commit:** d6d07af.
+- **Remaining uncertainty:** none.
+
 
