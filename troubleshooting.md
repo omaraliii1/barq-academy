@@ -67,4 +67,21 @@ backend]` instead of `[frontend]` only.
 - **Related commit:** d6d07af.
 - **Remaining uncertainty:** none.
 
+---
+
+## Entry 4
+- **Symptom:** `curl http://127.0.0.1:8080/` returns connection refused even though `docker
+  compose ps` shows `nginx` as `Up`.
+- **Hypothesis:** the host port is mapped to the wrong container port, or nginx isn't actually
+  listening where the mapping expects.
+- **Command or test:** compare `nginx` service `ports:` and `nginx.conf`'s `listen` directive.
+- **Actual output:** baseline compose maps `127.0.0.1:${PUBLIC_PORT:-8080}:81` (container port
+  **81**), while `nginx.conf` has `listen 80;` - the container never listens on 81 at all.
+- **Root cause:** host-to-container port mismatch (81 vs. 80) between compose and nginx.conf.
+- **Fix:** changed the compose mapping to `127.0.0.1:${PUBLIC_PORT:-8080}:80` to match `listen
+  80;` in `nginx.conf`.
+- **Retest evidence:** `curl -i http://127.0.0.1:8080/` should return `200`.
+- **Related commit:** ae40fc2.
+- **Remaining uncertainty:** none.
+
 
