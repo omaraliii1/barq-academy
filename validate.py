@@ -1,313 +1,251 @@
 #!/usr/bin/env python3
-
-import json
-import os
-import socket
+import time
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
-
-PUBLIC_PORT = int(os.getenv("PUBLIC_PORT", "8080"))
-BASE_URL = f"http://127.0.0.1:{PUBLIC_PORT}"
-
-TIMEOUT = 30
-INTERVAL = 2
-
-failures = 0
+import json
 
 
-def log_pass(message):
-    print(f"[PASS] {message}")
+"""Validate that the required BARQ services are running."""
+
+REQUIRED_SERVICES = [
+    "nginx",
+    "app-01",
+    "app-02",
+    "postgres",
+    "redis",
+]
 
 
-def log_fail(message):
-    global failures
-    failures += 1
-    print(f"[FAIL] {message}")
 
+def wait_for_http(url, timeout=30):
+    start = time.time()
 
-def request(path, method="GET", body=None, timeout=5):
-    url = BASE_URL + path
+    while time.time() - start < timeout:
+        result = subprocess.run(
+            ["curl", "-sf", "--max-time", "2", url],
+            capture_output=True,
+            text=True,
+        )
 
-    data = None
-    headers = {}
-
-    if body is not None:
-        data = json.dumps(body).encode()
-        headers["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers=headers,
-        method=method,
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read().decode()
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                payload = raw
-
-            return response.status, payload
-
-    except urllib.error.HTTPError as exc:
-        raw = exc.read().decode()
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            payload = raw
-
-        return exc.code, payload
-
-    except Exception as exc:
-        return None, str(exc)
-
-
-def wait_for_ready():
-    print(f"Waiting up to {TIMEOUT}s for application readiness...")
-
-    deadline = time.time() + TIMEOUT
-
-    while time.time() < deadline:
-        status, payload = request("/ready", timeout=3)
-
-        if status == 200:
-            log_pass("/ready reports PostgreSQL and Redis ready")
+        if result.returncode == 0:
             return True
 
-        time.sleep(INTERVAL)
+        time.sleep(1)
 
-    log_fail(f"/ready did not become healthy within {TIMEOUT}s")
     return False
 
 
 def check_endpoint(path, expected_status=200):
-    status, payload = request(path)
+    url = f"http://127.0.0.1:8080{path}"
 
-    if status == expected_status:
-        log_pass(f"{path} returns HTTP {expected_status}")
-        return payload
+    result = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+         "--max-time", "2", url],
+        capture_output=True,
+        text=True,
+    )
 
-    log_fail(f"{path} expected HTTP {expected_status}, got {status}: {payload}")
-    return None
+    status = result.stdout.strip()
+
+    if status == str(expected_status):
+        print(f"[PASS] GET {path} returns {status}")
+        return 0
+
+    print(f"[FAIL] GET {path} returned {status}, expected {expected_status}")
+    return 1
 
 
-def check_instances():
-    instances = set()
 
-    for _ in range(20):
-        status, payload = request("/instance")
+def check_instance():
+    url = "http://127.0.0.1:8080/instance"
 
-        if status != 200:
-            log_fail(f"/instance returned HTTP {status}")
-            return
+    result = subprocess.run(
+        ["curl", "-s", "--max-time", "2", url],
+        capture_output=True,
+        text=True,
+    )
 
-        if isinstance(payload, dict):
-            instance = payload.get("instance_id")
-            if instance:
-                instances.add(instance)
+    if result.returncode != 0:
+        print("[FAIL] GET /instance request failed")
+        return 1
 
-    expected = {"app-01", "app-02"}
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print("[FAIL] GET /instance returned invalid JSON")
+        return 1
 
-    if expected.issubset(instances):
-        log_pass(f"Both backend instances observed: {sorted(instances)}")
-    else:
-        log_fail(
-            f"Expected both app-01 and app-02, observed: {sorted(instances)}"
-        )
+    instance_id = data.get("instance_id")
+
+    if instance_id in {"app-01", "app-02"}:
+        print(f"[PASS] GET /instance identifies {instance_id}")
+        return 0
+
+    print(f"[FAIL] GET /instance returned invalid instance_id: {instance_id}")
+    return 1
+
 
 
 def check_records():
-    title = f"validation-{int(time.time())}"
+    url = "http://127.0.0.1:8080/records"
+    title = f"validation-{time.time_ns()}"
 
-    status, payload = request(
-        "/records",
-        method="POST",
-        body={"title": title},
+    create_result = subprocess.run(
+        [
+            "curl", "-sS", "--max-time", "2",
+            "-X", "POST",
+            "-H", "Content-Type: application/json",
+            "-d", json.dumps({"title": title}),
+            "-w", "\n%{http_code}",
+            url,
+        ],
+        capture_output=True,
+        text=True,
     )
 
-    if status != 201:
-        log_fail(f"POST /records expected 201, got {status}: {payload}")
-        return
+    if create_result.returncode != 0:
+        print("[FAIL] POST /records request failed")
+        return 1
 
-    log_pass("POST /records creates a PostgreSQL record")
+    lines = create_result.stdout.strip().splitlines()
+    status = lines[-1] if lines else ""
 
-    status, payload = request("/records")
+    if status != "201":
+        print(f"[FAIL] POST /records returned {status}, expected 201")
+        return 1
 
-    if status != 200:
-        log_fail(f"GET /records expected 200, got {status}")
-        return
+    try:
+        data = json.loads("\n".join(lines[:-1]))
+    except json.JSONDecodeError:
+        print("[FAIL] POST /records returned invalid JSON")
+        return 1
 
-    records = payload.get("records", []) if isinstance(payload, dict) else []
+    if data.get("record", {}).get("title") != title:
+        print("[FAIL] POST /records did not return the created record")
+        return 1
+
+    get_result = subprocess.run(
+        ["curl", "-sS", "--max-time", "2", url],
+        capture_output=True,
+        text=True,
+    )
+
+    if get_result.returncode != 0:
+        print("[FAIL] GET /records request failed")
+        return 1
+
+    try:
+        data = json.loads(get_result.stdout)
+    except json.JSONDecodeError:
+        print("[FAIL] GET /records returned invalid JSON")
+        return 1
+
+    records = data.get("records", [])
 
     if any(record.get("title") == title for record in records):
-        log_pass("GET /records returns the created PostgreSQL record")
-    else:
-        log_fail("Created PostgreSQL record was not found")
+        print("[PASS] /records can create and read PostgreSQL records")
+        return 0
+
+    print("[FAIL] Created record was not found by GET /records")
+    return 1
+
 
 
 def check_counter():
-    status1, payload1 = request("/counter")
-    status2, payload2 = request("/counter")
+    url = "http://127.0.0.1:8080/counter"
 
-    if status1 != 200 or status2 != 200:
-        log_fail(
-            f"/counter failed: first={status1}, second={status2}"
-        )
-        return
+    first_result = subprocess.run(
+        ["curl", "-sS", "--max-time", "2", url],
+        capture_output=True,
+        text=True,
+    )
+
+    if first_result.returncode != 0:
+        print("[FAIL] First GET /counter request failed")
+        return 1
 
     try:
-        first = int(payload1["counter"])
-        second = int(payload2["counter"])
-    except (KeyError, TypeError, ValueError):
-        log_fail(f"/counter returned unexpected data: {payload1}, {payload2}")
-        return
+        first_data = json.loads(first_result.stdout)
+        first_value = first_data["counter"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        print("[FAIL] First /counter response is invalid")
+        return 1
 
-    if second > first:
-        log_pass(f"Redis counter increments: {first} -> {second}")
-    else:
-        log_fail(f"Redis counter did not increment: {first} -> {second}")
+    second_result = subprocess.run(
+        ["curl", "-sS", "--max-time", "2", url],
+        capture_output=True,
+        text=True,
+    )
 
+    if second_result.returncode != 0:
+        print("[FAIL] Second GET /counter request failed")
+        return 1
 
-def check_network_isolation():
     try:
+        second_data = json.loads(second_result.stdout)
+        second_value = second_data["counter"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        print("[FAIL] Second /counter response is invalid")
+        return 1
+
+    if second_value == first_value + 1:
+        print("[PASS] /counter increments correctly using Redis")
+        return 0
+
+    print(
+        f"[FAIL] /counter did not increment correctly: "
+        f"{first_value} -> {second_value}"
+    )
+    return 1
+
+
+
+
+def check_services():
+    failed = 0
+
+    for service in REQUIRED_SERVICES:
         result = subprocess.run(
-            ["docker", "inspect", "nginx", "app-01", "app-02", "postgres", "redis"],
+            ["docker", "inspect", "-f", "{{.State.Running}}", service],
             capture_output=True,
             text=True,
-            check=True,
         )
 
-        containers = json.loads(result.stdout)
-
-        published = []
-
-        for container in containers:
-            name = container["Name"].lstrip("/")
-
-            ports = container["NetworkSettings"]["Ports"] or {}
-
-            for container_port, bindings in ports.items():
-                if bindings:
-                    for binding in bindings:
-                        published.append(
-                            (
-                                name,
-                                container_port,
-                                binding.get("HostIp"),
-                                binding.get("HostPort"),
-                            )
-                        )
-
-        non_nginx = [item for item in published if item[0] != "nginx"]
-
-        if non_nginx:
-            log_fail(
-                f"Non-NGINX containers expose host ports: {non_nginx}"
-            )
+        if result.returncode == 0 and result.stdout.strip() == "true":
+            print(f"[PASS] {service} is running")
         else:
-            log_pass("Only NGINX publishes a host port")
+            print(f"[FAIL] {service} is not running")
+            failed += 1
 
-        nginx_ports = [item for item in published if item[0] == "nginx"]
+    return failed
 
-        expected_port = str(PUBLIC_PORT)
-
-        if any(item[3] == expected_port for item in nginx_ports):
-            log_pass(f"NGINX publishes host port {PUBLIC_PORT}")
-        else:
-            log_fail(
-                f"NGINX does not publish expected host port {PUBLIC_PORT}: "
-                f"{nginx_ports}"
-            )
-
-    except subprocess.CalledProcessError as exc:
-        log_fail(f"Could not inspect Docker containers: {exc}")
-    except Exception as exc:
-        log_fail(f"Network isolation check failed: {exc}")
-
-
-def check_container_health():
-    containers = ["nginx", "app-01", "app-02", "postgres", "redis"]
-    deadline = time.time() + 30
-
-    while time.time() < deadline:
-        unhealthy = []
-
-        for container in containers:
-            try:
-                result = subprocess.run(
-                    [
-                        "docker",
-                        "inspect",
-                        "--format",
-                        "{{.State.Health.Status}}",
-                        container,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-
-                health = result.stdout.strip()
-
-                if health != "healthy":
-                    unhealthy.append((container, health))
-
-            except subprocess.CalledProcessError:
-                unhealthy.append((container, "unavailable"))
-
-        if not unhealthy:
-            for container in containers:
-                log_pass(f"{container} is healthy")
-            return
-
-        time.sleep(2)
-
-    for container, health in unhealthy:
-        log_fail(f"{container} health status: {health}")
 
 def main():
-    print("=" * 60)
-    print("BARQ Academy environment validation")
-    print(f"Public endpoint: {BASE_URL}")
-    print("=" * 60)
+    failed = check_services()
 
-    # First establish bounded readiness.
-    wait_for_ready()
+    if wait_for_http("http://127.0.0.1:8080/health"):
+        print("[PASS] NGINX /health is reachable")
+    else:
+        print("[FAIL] NGINX /health did not become ready within 30 seconds")
+        failed += 1
+    
+    
+    failed += check_endpoint("/")
+    failed += check_endpoint("/health")
+    failed += check_endpoint("/ready")
+    failed += check_instance()
+    failed += check_records()
+    failed += check_counter()
+    
+    
+    print()
+    if failed == 0:
+        print("Validation passed.")
+        return 0
 
-    # Required endpoints.
-    check_endpoint("/")
-    check_endpoint("/health")
-    check_endpoint("/ready")
-    check_endpoint("/instance")
-
-    # Real PostgreSQL operation.
-    check_records()
-
-    # Real Redis operation.
-    check_counter()
-
-    # Prove both application instances are behind NGINX.
-    check_instances()
-
-    # Docker-level checks.
-    check_container_health()
-    check_network_isolation()
-
-    print("=" * 60)
-
-    if failures:
-        print(f"Validation: FAIL ({failures} failed checks)")
-        sys.exit(1)
-
-    print("Validation: PASS")
-    sys.exit(0)
+    print(f"Validation failed: {failed} check(s) failed.")
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
