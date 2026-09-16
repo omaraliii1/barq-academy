@@ -2,14 +2,14 @@
 
 Fix, test and explain the supplied environment.
 
-Due date: ____________________  |  4 calendar days from the invitation email date/time.
+Due date: 16/09/2026 |  4 calendar days from the invitation email date/time.
 
 Everyone receives the same Flask app, broken environment and three logs. Hidden issue types and count are not disclosed. Verify starter values.
 
 Tools: Linux/WSL, Git, Docker, Compose, NGINX, PostgreSQL, Redis, Bash/Python, GitHub Actions.
 
 ## Part 1: Investigate
-- Create your GitHub repository. Keep the baseline; commit before technical changes.
+- Create your GitHub repository. Keep the baseline; commit before technical changes. -- done
 - Commit progressively: investigate -> fix -> verify. Use meaningful messages, not bulk uploads.
 - For each issue, record symptoms, hypotheses, commands, results and failed attempts.
 - Add the root cause, fix, retest evidence and commit. Claim fixes only when proven.
@@ -18,32 +18,32 @@ Tools: Linux/WSL, Git, Docker, Compose, NGINX, PostgreSQL, Redis, Bash/Python, G
 - Show reproducible commands, counts, a timeline and conclusions; e.g. errors by time.
 
 ## Part 2: Docker, networking and NGINX
-- Use Dockerfile, docker-compose.yml, app/ and nginx/nginx.conf.
-- Run two Flask instances behind NGINX, with working PostgreSQL and Redis connections.
-- Publish only NGINX on host port 8080. Do not publish app, PostgreSQL or Redis ports.
-- Connect NGINX + apps to frontend; apps + PostgreSQL + Redis to backend.
-- Block direct NGINX access to PostgreSQL/Redis. Use service names, not container IPs.
+- Use Dockerfile, docker-compose.yml, app/ and nginx/nginx.conf. --done
+- Run two Flask instances behind NGINX, with working PostgreSQL and Redis connections. --tested
+- Publish only NGINX on host port 8080. Do not publish app, PostgreSQL or Redis ports. --done
+- Connect NGINX + apps to frontend; apps + PostgreSQL + Redis to backend. --done
+- Block direct NGINX access to PostgreSQL/Redis. Use service names, not container IPs. --done
 - Before the video, name containers app-01, app-02, nginx, postgres and redis.
-- Keep network names ending in frontend and backend. Return distinct app identities.
-- Use a named PostgreSQL volume. Configure Redis persistence where appropriate.
+- Keep network names ending in frontend and backend. Return distinct app identities. --done
+- Use a named PostgreSQL volume. Configure Redis persistence where appropriate. --done
 - Set correct environment variables, health/readiness checks, restart policies and resource limits.
-- Use required dependencies only. Avoid root/privileged operation where practical.
+- Use required dependencies only. Avoid root/privileged operation where practical. --done
 - Use health-check tools installed in the image. Explain base-image and health-check choices.
-- Keep secrets out of images, code and Compose. Ignore secret files; provide a safe .env.example.
+- Keep secrets out of images, code and Compose. Ignore secret files; provide a safe .env.example. --done
 
 ## Required endpoints
-- /: app response. /health: process liveness. /ready: PostgreSQL + Redis readiness.
-- /instance: backend identity. /records: create/list PostgreSQL records.
-- /counter: Redis-backed counter. Use real database/cache operations.
+- /: app response. /health: process liveness. /ready: PostgreSQL + Redis readiness. --done
+- /instance: backend identity. /records: create/list PostgreSQL records. --done
+- /counter: Redis-backed counter. Use real database/cache operations. --done
 
 ## Part 3: Validation, persistence and CI
 - Write validate.sh or validate.py. Use bounded waits, PASS/FAIL and non-zero failure exits.
 - Check public access, all endpoints, both backends and PostgreSQL/Redis readiness.
 - Check network isolation and prohibited host ports.
-- Write failure_test.sh/.py: stop one backend, check availability, restore it and verify recovery.
-- Measure traffic and errors during failure. Prove the recovered backend serves requests.
+- Write failure_test.sh/.py: stop one backend, check availability, restore it and verify recovery. --done
+- Measure traffic and errors during failure. Prove the recovered backend serves requests. --done
 - Write backup.sh and restore.sh (or equivalents). Prove a PostgreSQL backup restores.
-- Create a record through /records. Recreate app and PostgreSQL containers, keeping the volume.
+- Create a record through /records. Recreate app and PostgreSQL containers, keeping the volume. --done
 - Prove the record survives. Document exact test, backup and restore commands.
 - Add .github/workflows/ci.yml. Run on push and pull request.
 - CI: checkout -> syntax/Compose checks -> build -> start -> wait for readiness -> validate.
