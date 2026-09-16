@@ -162,3 +162,26 @@ backend]` instead of `[frontend]` only.
 - **Remaining uncertainty:** none - both are point-in-time config facts, easily reverified.
 
 
+---
+
+## Entry 9 
+- **Symptom:** `/ready` reports Postgres/Redis unavailable even though the containers are
+  running and healthy per Docker.
+- **Hypothesis:** the app's connection strings in `config/app.env` point at the wrong ports.
+- **Command or test:** compare `config/app.env` `DATABASE_URL`/`REDIS_URL` against the actual
+  ports Postgres/Redis listen on inside the compose network (5432, 6379).
+- **Actual output:** baseline `config/app.env`:
+  `DATABASE_URL=postgresql://barq_app:...@postgres:5433/barq_tasks` and
+  `REDIS_URL=redis://redis:6380/0` - both off by one from the real ports (5432, 6379).
+- **Root cause:** wrong internal ports in the app's connection strings (these are container-network
+  ports, unrelated to the host-side `15432`/`16379` mappings removed in Entry 1 - two independent
+  bugs that happened to look similar).
+- **Fix:** corrected to `postgres:5432` and `redis:6379`; also filled in the previously-missing
+  `POSTGRES_USER`/`POSTGRES_DB`/`POSTGRES_PASSWORD`/`APP_HOST`/`APP_PORT`/`APP_MESSAGE` keys in
+  `config/app.env` so all services read consistent values from one file.
+- **Retest evidence:** `curl http://127.0.0.1:8080/ready` should return `200`
+  with `{"postgres":"ready","redis":"ready"}`.
+- **Related commit:** 710165c.
+- **Remaining uncertainty:** none.
+
+---
