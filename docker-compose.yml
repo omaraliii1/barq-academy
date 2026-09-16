@@ -62,7 +62,7 @@ services:
     depends_on: [app-01, app-02]
     networks: [frontend]
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/nginx-health"]
       interval: 5s
       timeout: 3s
       retries: 3
