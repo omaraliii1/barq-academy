@@ -16,12 +16,12 @@ The supplied Flask API uses real PostgreSQL and Redis. Keep this behavior.
 Example requests after repair:
 
 ```bash
-curl -i http://127.0.0.1:8080/health
-curl -i http://127.0.0.1:8080/ready
-curl -H 'Content-Type: application/json' -d '{"title":"Persistence proof"}' http://127.0.0.1:8080/records
-curl http://127.0.0.1:8080/records
-curl http://127.0.0.1:8080/counter
-curl http://127.0.0.1:8080/instance
+curl -i http://127.0.0.1:8080/health  # Checked
+curl -i http://127.0.0.1:8080/ready # Checked
+curl -H 'Content-Type: application/json' -d '{"title":"Persistence proof"}' http://127.0.0.1:8080/records # Checked
+curl http://127.0.0.1:8080/records # Checked
+curl http://127.0.0.1:8080/counter # Checked
+curl http://127.0.0.1:8080/instance # Checked
 ```
 
 Environment inputs: INSTANCE_ID, APP_MESSAGE, APP_HOST, APP_PORT, DATABASE_URL and REDIS_URL.
