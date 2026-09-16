@@ -142,4 +142,23 @@ backend]` instead of `[frontend]` only.
 
 ---
 
+## Entry 8 
+- **Symptom:** the Flask container runs as `root`, and the built image contains a secret file
+  that shouldn't be baked into it.
+- **Hypothesis:** `Dockerfile` copies `config/app.env` (which holds `POSTGRES_PASSWORD`) into the
+  image and never switches away from `root`.
+- **Command or test:** read baseline `Dockerfile`.
+- **Actual output:** baseline has `COPY config/app.env /srv/app.env` and `USER root` (explicit),
+  with no non-root user ever created.
+- **Root cause:** two separate security issues - a credential baked into every image layer
+  (recoverable from the image even after the file is later "removed"), and the process running
+  with full container privileges unnecessarily.
+- **Fix:** removed the `COPY config/app.env ...` line entirely (the app already reads
+  `DATABASE_URL`/`REDIS_URL` from the compose `env_file:` at runtime, so baking it into the image
+  was never needed); added `groupadd`/`useradd` for a dedicated `app` UID 10001 and `USER app`.
+- **Retest evidence:** `docker run --rm --entrypoint sh <image> -c "ls /srv"`
+  should not show `app.env`; `docker compose exec app-01 whoami` should print `app`, not `root`.
+- **Related commit:** 840a9e7, ae0ef4a.
+- **Remaining uncertainty:** none - both are point-in-time config facts, easily reverified.
+
 
