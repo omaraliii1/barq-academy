@@ -84,4 +84,22 @@ backend]` instead of `[frontend]` only.
 - **Related commit:** ae40fc2.
 - **Remaining uncertainty:** none.
 
+---
+
+## Entry 5 
+- **Symptom:** even with the port fixed, only one Flask instance ever answers - the other never
+  receives traffic and eventually nginx logs upstream errors for it.
+- **Hypothesis:** the nginx `upstream` block has a typo in one of the two backend addresses.
+- **Command or test:** read `nginx/nginx.conf`'s `upstream application_pool` block in baseline.
+- **Actual output:** baseline: `server app-01:8081 max_fails=0;` (wrong port - the app listens on
+  8080, not 8081) alongside `server app-02:8080 max_fails=0;`, plus `max_fails=0` (disables nginx's
+  own failure tracking) and `proxy_next_upstream off;` (disables retry-on-failure entirely).
+- **Root cause:** upstream port typo for app-01, and failover explicitly disabled.
+- **Fix:** corrected `app-01:8081` to `app-01:8080`; set `max_fails=3 fail_timeout=5s` on both
+  servers; enabled `proxy_next_upstream error timeout http_502 http_503 http_504;` so nginx can
+  retry a failed backend without surfacing a client-facing error, consistent with the recovered
+  requests seen in `log_analysis.md` Q6.
+- **Retest evidence:**  repeated `curl http://127.0.0.1:8080/instance` should alternate `instance_id` between `app-01` and `app-02`.
+- **Related commit:** 1df47e9, e12b24a.
+- **Remaining uncertainty:** none.
 
