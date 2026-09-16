@@ -23,3 +23,31 @@ backend]` instead of `[frontend]` only.
   host port.
 - **Related commit:** a770d34, ae40fc2, bc48867.
 - **Remaining uncertainty:** none - this is a static config comparison.
+---
+
+## Entry 2 
+- **Symptom:** even after fixing ports/networks, a record created through `/records` does not
+  survive `docker compose down && up` (recreating the postgres container loses data despite a
+  named volume being declared).
+- **Hypothesis:** the named volume is mounted at the wrong path, so PostgreSQL isn't actually
+  writing its data directory to it.
+- **Command or test:** inspect the `postgres` service block in the baseline compose file.
+- **Actual output:** baseline has
+  `volumes: ["postgres-data:/var/lib/postgresql/backup", "./database/init.sql:...:ro"]` **and**
+  `tmpfs: [/var/lib/postgresql/data]` - the real data directory (`/var/lib/postgresql/data`) is
+  overridden by an in-memory `tmpfs`, while the named volume is mounted to an unused `/backup`
+  path that PostgreSQL never writes to.
+- **Failed attempt:** initially assumed the volume declaration alone (`postgres-data:`) was
+  sufficient and almost left the mount path unchanged - re-reading the official postgres image
+  docs confirmed the data directory must be `/var/lib/postgresql/data` for `PGDATA` to persist.
+- **Root cause:** `tmpfs` on the real data dir means every container recreation starts from an
+  empty database; the named volume was a decoy mounted to a path Postgres doesn't use.
+- **Fix:** changed the volume mount to `postgres-data:/var/lib/postgresql/data` and removed the
+  `tmpfs:` entry entirely.
+- **Retest evidence:** create a record via `POST /records`, run `docker
+  compose -p barq-assessment up -d --force-recreate app-01 app-02 postgres`, then `GET /records`
+  and confirm the record is still present.
+- **Related commit:** d35ddcc, d3f7aa2.
+- **Remaining uncertainty:** none once retested; this was a config-only bug.
+
+
