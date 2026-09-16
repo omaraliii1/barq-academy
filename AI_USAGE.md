@@ -1,8 +1,8 @@
 # AI usage disclosure
 
 - Tool/model: ChatGPT
-- Purpose: Generating the faliure/validate scripts after troubleshooting
-- Files or decisions affected: faliure_test.py, validate.py
+- Purpose: Generating the faliure/validate scripts and CI after troubleshooting
+- Files or decisions affected: faliure_test.py, validate.py and ci.yml
 - What you changed or rejected: N/A
 - How you independently verified it: N/A
 - Related commit: N/A
