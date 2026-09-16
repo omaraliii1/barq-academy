@@ -122,3 +122,24 @@ backend]` instead of `[frontend]` only.
 - **Related commit:** f936568.
 - **Remaining uncertainty:** none.
 
+
+---
+
+## Entry 7
+- **Symptom:** `/instance` on both containers reports the same identity - "return distinct app
+  identities" requirement fails.
+- **Hypothesis:** `INSTANCE_ID` is set identically on both services.
+- **Command or test:** read the `app-02` service override in baseline compose.
+- **Actual output:** baseline `app-02.environment.INSTANCE_ID: "app-01"` - a copy-paste bug,
+  app-02 was given app-01's identity.
+- **Root cause:** duplicated identity value.
+- **Fix:** changed `app-02`'s `INSTANCE_ID` to `"app-02"`.
+- **Retest evidence:** `curl http://127.0.0.1:8080/instance` on repeated
+  requests shows both `app-01` and `app-02`, never the same value from two different container
+  IPs.
+- **Related commit:** 525fa9b.
+- **Remaining uncertainty:** none.
+
+---
+
+
