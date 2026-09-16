@@ -233,32 +233,43 @@ def check_network_isolation():
 
 def check_container_health():
     containers = ["nginx", "app-01", "app-02", "postgres", "redis"]
+    deadline = time.time() + 30
 
-    for container in containers:
-        try:
-            result = subprocess.run(
-                [
-                    "docker",
-                    "inspect",
-                    "--format",
-                    "{{.State.Health.Status}}",
-                    container,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+    while time.time() < deadline:
+        unhealthy = []
 
-            health = result.stdout.strip()
+        for container in containers:
+            try:
+                result = subprocess.run(
+                    [
+                        "docker",
+                        "inspect",
+                        "--format",
+                        "{{.State.Health.Status}}",
+                        container,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
 
-            if health == "healthy":
+                health = result.stdout.strip()
+
+                if health != "healthy":
+                    unhealthy.append((container, health))
+
+            except subprocess.CalledProcessError:
+                unhealthy.append((container, "unavailable"))
+
+        if not unhealthy:
+            for container in containers:
                 log_pass(f"{container} is healthy")
-            else:
-                log_fail(f"{container} health status: {health}")
+            return
 
-        except subprocess.CalledProcessError:
-            log_fail(f"Could not inspect health of {container}")
+        time.sleep(2)
 
+    for container, health in unhealthy:
+        log_fail(f"{container} health status: {health}")
 
 def main():
     print("=" * 60)
