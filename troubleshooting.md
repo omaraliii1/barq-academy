@@ -103,3 +103,22 @@ backend]` instead of `[frontend]` only.
 - **Related commit:** 1df47e9, e12b24a.
 - **Remaining uncertainty:** none.
 
+
+---
+
+## Entry 6 
+- **Symptom:** `docker compose ps` shows the `app-01`/`app-02` healthcheck stuck `unhealthy`
+  forever, even though the app itself responds fine to manual `curl`.
+- **Hypothesis:** the healthcheck probes an endpoint the app doesn't implement.
+- **Command or test:** compare the `x-app.healthcheck.test` command in baseline compose against
+  `app/server.py`'s actual routes.
+- **Actual output:** baseline healthcheck: `urllib.request.urlopen('http://127.0.0.1:8080/healthz'
+  ...)`, but `app/server.py` only defines `/health` (no `z`) - every healthcheck probe returns
+  `404`, which `urlopen` raises as an exception, so the check always fails.
+- **Root cause:** healthcheck path/route mismatch.
+- **Fix:** changed the healthcheck URL to `/health`.
+- **Retest evidence:** `docker compose -p barq-assessment ps` should show
+  `app-01`/`app-02` as `healthy` within the `start_period`.
+- **Related commit:** f936568.
+- **Remaining uncertainty:** none.
+
