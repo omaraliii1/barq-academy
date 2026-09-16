@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-import time
+
+import json
 import subprocess
 import sys
-import json
+import time
 
 
-"""Validate that the required BARQ services are running."""
+"""Validate that the required BARQ services are running and healthy."""
+
 
 REQUIRED_SERVICES = [
     "nginx",
@@ -15,6 +17,7 @@ REQUIRED_SERVICES = [
     "redis",
 ]
 
+BASE_URL = "http://127.0.0.1:8080"
 
 
 def wait_for_http(url, timeout=30):
@@ -36,11 +39,20 @@ def wait_for_http(url, timeout=30):
 
 
 def check_endpoint(path, expected_status=200):
-    url = f"http://127.0.0.1:8080{path}"
+    url = f"{BASE_URL}{path}"
 
     result = subprocess.run(
-        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-         "--max-time", "2", url],
+        [
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "2",
+            url,
+        ],
         capture_output=True,
         text=True,
     )
@@ -55,9 +67,8 @@ def check_endpoint(path, expected_status=200):
     return 1
 
 
-
 def check_instance():
-    url = "http://127.0.0.1:8080/instance"
+    url = f"{BASE_URL}/instance"
 
     result = subprocess.run(
         ["curl", "-s", "--max-time", "2", url],
@@ -85,18 +96,24 @@ def check_instance():
     return 1
 
 
-
 def check_records():
-    url = "http://127.0.0.1:8080/records"
+    url = f"{BASE_URL}/records"
     title = f"validation-{time.time_ns()}"
 
     create_result = subprocess.run(
         [
-            "curl", "-sS", "--max-time", "2",
-            "-X", "POST",
-            "-H", "Content-Type: application/json",
-            "-d", json.dumps({"title": title}),
-            "-w", "\n%{http_code}",
+            "curl",
+            "-sS",
+            "--max-time",
+            "2",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            json.dumps({"title": title}),
+            "-w",
+            "\n%{http_code}",
             url,
         ],
         capture_output=True,
@@ -150,9 +167,8 @@ def check_records():
     return 1
 
 
-
 def check_counter():
-    url = "http://127.0.0.1:8080/counter"
+    url = f"{BASE_URL}/counter"
 
     first_result = subprocess.run(
         ["curl", "-sS", "--max-time", "2", url],
@@ -199,8 +215,6 @@ def check_counter():
     return 1
 
 
-
-
 def check_services():
     failed = 0
 
@@ -220,30 +234,101 @@ def check_services():
     return failed
 
 
-def main():
-    failed = check_services()
+def wait_for_container_health(timeout=30):
+    """Wait until all required containers report healthy."""
 
-    if wait_for_http("http://127.0.0.1:8080/health"):
-        print("[PASS] NGINX /health is reachable")
+    print("Waiting up to 30s for required containers to become healthy...")
+
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        all_healthy = True
+        statuses = {}
+
+        for service in REQUIRED_SERVICES:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}",
+                    service,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                statuses[service] = "unavailable"
+                all_healthy = False
+                continue
+
+            status = result.stdout.strip()
+            statuses[service] = status
+
+            if status != "healthy":
+                all_healthy = False
+
+        if all_healthy:
+            print("[PASS] All required containers are healthy")
+            return 0
+
+        time.sleep(2)
+
+    print("[FAIL] Required containers did not become healthy within 30 seconds")
+
+    for service, status in statuses.items():
+        if status == "healthy":
+            print(f"  {service}: healthy")
+        else:
+            print(f"  {service}: {status}")
+
+    return 1
+
+
+def main():
+    failed = 0
+
+    print("=" * 60)
+    print("BARQ Academy environment validation")
+    print(f"Public endpoint: {BASE_URL}")
+    print("=" * 60)
+
+    # 1. Confirm containers are running.
+    failed += check_services()
+
+    # 2. Wait for Docker healthchecks to complete.
+    failed += wait_for_container_health()
+
+    # 3. Establish bounded application readiness.
+    if wait_for_http(f"{BASE_URL}/ready"):
+        print("[PASS] /ready reports PostgreSQL and Redis ready")
     else:
-        print("[FAIL] NGINX /health did not become ready within 30 seconds")
+        print("[FAIL] /ready did not become ready within 30 seconds")
         failed += 1
-    
-    
+
+    # 4. Required endpoints.
     failed += check_endpoint("/")
     failed += check_endpoint("/health")
     failed += check_endpoint("/ready")
     failed += check_instance()
+
+    # 5. PostgreSQL persistence test.
     failed += check_records()
+
+    # 6. Redis counter test.
     failed += check_counter()
-    
-    
+
     print()
+    print("=" * 60)
+
     if failed == 0:
         print("Validation passed.")
+        print("=" * 60)
         return 0
 
     print(f"Validation failed: {failed} check(s) failed.")
+    print("=" * 60)
     return 1
 
 
