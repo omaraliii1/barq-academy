@@ -1,221 +1,175 @@
 #!/usr/bin/env python3
 
-"""Candidate deliverable: stop one backend, measure traffic, restore it and verify."""
-
 import json
+import os
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 
-BASE_URL = "http://127.0.0.1:8080"
-TARGET = "app-01"
-REQUEST_COUNT = 20
-TIMEOUT = 2
-RECOVERY_TIMEOUT = 60
+PUBLIC_PORT = int(os.getenv("PUBLIC_PORT", "8080"))
+BASE_URL = f"http://127.0.0.1:{PUBLIC_PORT}"
+
+REQUESTS = 30
+REQUEST_TIMEOUT = 3
 
 
-def run_compose(*args):
-    command = ["docker", "compose", *args]
+def request():
+    try:
+        request = urllib.request.Request(
+            f"{BASE_URL}/instance",
+            headers={"Connection": "close"},
+        )
+
+        start = time.perf_counter()
+
+        with urllib.request.urlopen(
+            request,
+            timeout=REQUEST_TIMEOUT,
+        ) as response:
+            body = response.read().decode()
+
+        duration = time.perf_counter() - start
+
+        try:
+            payload = json.loads(body)
+            instance = payload.get("instance_id")
+        except json.JSONDecodeError:
+            instance = None
+
+        return True, instance, duration
+
+    except Exception:
+        return False, None, None
+
+
+def traffic_test(label, count=REQUESTS):
+    print(f"\n--- {label} ---")
+
+    successful = 0
+    failed = 0
+    instances = {}
+
+    for _ in range(count):
+        success, instance, duration = request()
+
+        if success:
+            successful += 1
+            instances[instance] = instances.get(instance, 0) + 1
+        else:
+            failed += 1
+
+    print(f"Requests:   {count}")
+    print(f"Successful: {successful}")
+    print(f"Failed:     {failed}")
+    print(f"Instances:  {instances}")
+
+    return successful, failed, instances
+
+
+def compose(command):
     result = subprocess.run(
-        command,
+        ["docker", "compose"] + command,
         text=True,
         capture_output=True,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed: {' '.join(command)}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
+        print(result.stdout)
+        print(result.stderr, file=sys.stderr)
+        sys.exit(1)
 
-    return result.stdout.strip()
+    return result
 
 
-def request_instance():
-    try:
-        with urllib.request.urlopen(
-            f"{BASE_URL}/instance",
-            timeout=TIMEOUT,
-        ) as response:
-            body = json.loads(response.read().decode())
+def wait_for_instance(instance, timeout=30):
+    print(f"\nWaiting up to {timeout}s for {instance} to recover...")
 
-            return {
-                "success": True,
-                "status": response.status,
-                "instance": body.get("instance_id"),
-            }
-
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        return {
-            "success": False,
-            "status": None,
-            "instance": None,
-            "error": str(exc),
-        }
-
-
-def measure_traffic(count):
-    results = []
-
-    for _ in range(count):
-        results.append(request_instance())
-
-    successes = [r for r in results if r["success"]]
-    failures = [r for r in results if not r["success"]]
-
-    instances = {}
-
-    for result in successes:
-        instance = result["instance"]
-        instances[instance] = instances.get(instance, 0) + 1
-
-    return {
-        "total": len(results),
-        "successful": len(successes),
-        "failed": len(failures),
-        "instances": instances,
-        "results": results,
-    }
-
-
-def print_measurement(name, measurement):
-    print(f"\n--- {name} ---")
-    print(f"Requests:   {measurement['total']}")
-    print(f"Successful: {measurement['successful']}")
-    print(f"Failed:     {measurement['failed']}")
-    print(f"Instances:  {measurement['instances']}")
-
-    if measurement["failed"]:
-        print("Failure examples:")
-
-        for result in measurement["results"]:
-            if not result["success"]:
-                print(f"  {result['error']}")
-                break
-
-
-def wait_for_instance(instance, timeout=RECOVERY_TIMEOUT):
     deadline = time.time() + timeout
 
     while time.time() < deadline:
-        result = request_instance()
+        success, current_instance, _ = request()
 
-        if result["success"] and result["instance"] == instance:
+        if success and current_instance == instance:
+            print(f"[PASS] {instance} is serving traffic again")
             return True
 
-        time.sleep(2)
+        time.sleep(1)
 
+    print(f"[FAIL] {instance} did not recover within {timeout}s")
     return False
 
 
 def main():
-    print("=== BARQ backend failure/recovery test ===")
-    print(f"Target backend: {TARGET}")
+    print("=" * 60)
+    print("BARQ backend failure/recovery test")
     print(f"Public endpoint: {BASE_URL}")
+    print("=" * 60)
 
-    target_was_running = False
+    # Establish baseline.
+    baseline_success, baseline_failed, baseline_instances = traffic_test(
+        "Baseline traffic"
+    )
+
+    if baseline_success == 0:
+        print("[FAIL] No successful baseline traffic")
+        sys.exit(1)
+
+    # Stop one backend.
+    print("\nStopping app-01...")
+    compose(["stop", "app-01"])
 
     try:
-        # Make sure the target backend exists and is running.
-        ps_output = run_compose("ps", "-q", TARGET)
-
-        if not ps_output:
-            raise RuntimeError(f"{TARGET} container was not found.")
-
-        inspect = subprocess.run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", TARGET],
-            text=True,
-            capture_output=True,
-        )
-
-        target_was_running = inspect.stdout.strip() == "true"
-
-        if not target_was_running:
-            raise RuntimeError(f"{TARGET} is not running.")
-
-        # 1. Baseline traffic.
-        baseline = measure_traffic(REQUEST_COUNT)
-        print_measurement("Baseline traffic", baseline)
-
-        if baseline["successful"] == 0:
-            raise RuntimeError("Baseline traffic failed completely.")
-
-        # 2. Stop one backend.
-        print(f"\nStopping {TARGET}...")
-        run_compose("stop", TARGET)
-
-        # Give Docker/NGINX a moment to observe the failure.
+        # Give NGINX a moment to detect the failed upstream.
         time.sleep(2)
 
-        # 3. Measure traffic while backend is down.
-        during_failure = measure_traffic(REQUEST_COUNT)
-        print_measurement("Traffic while backend is stopped", during_failure)
+        failed_success, failed_requests, failed_instances = traffic_test(
+            "Traffic while app-01 is stopped"
+        )
 
-        # The surviving backend must receive successful traffic.
-        surviving_instances = {
-            instance: count
-            for instance, count in during_failure["instances"].items()
-            if instance != TARGET
-        }
+        # We expect traffic to continue through app-02.
+        if failed_success == 0:
+            print("[FAIL] No traffic survived backend failure")
+            sys.exit(1)
 
-        if not surviving_instances:
-            raise RuntimeError(
-                "No successful traffic reached a surviving backend."
+        if "app-02" not in failed_instances:
+            print(
+                "[FAIL] app-02 did not serve traffic while app-01 was stopped"
             )
+            sys.exit(1)
 
-        if during_failure["successful"] == 0:
-            raise RuntimeError(
-                "All requests failed while one backend was stopped."
-            )
+        print("[PASS] app-02 continued serving traffic")
 
-        # 4. Restore backend.
-        print(f"\nRestoring {TARGET}...")
-        run_compose("start", TARGET)
+        # Restore app-01.
+        print("\nStarting app-01...")
+        compose(["start", "app-01"])
 
-        print(f"Waiting for {TARGET} to recover...")
+        if not wait_for_instance("app-01"):
+            sys.exit(1)
 
-        if not wait_for_instance(TARGET):
-            raise RuntimeError(
-                f"{TARGET} did not receive a successful request "
-                f"within {RECOVERY_TIMEOUT} seconds."
-            )
+        # Prove recovered backend receives requests.
+        recovery_success, recovery_failed, recovery_instances = traffic_test(
+            "Traffic after app-01 recovery"
+        )
 
-        # 5. Verify traffic after recovery.
-        after_recovery = measure_traffic(REQUEST_COUNT)
-        print_measurement("Traffic after backend recovery", after_recovery)
+        if "app-01" not in recovery_instances:
+            print("[FAIL] Recovered app-01 did not serve traffic")
+            sys.exit(1)
 
-        if after_recovery["successful"] == 0:
-            raise RuntimeError("Traffic did not recover.")
+        print("[PASS] Recovered app-01 served traffic")
 
-        if TARGET not in after_recovery["instances"]:
-            raise RuntimeError(
-                f"{TARGET} recovered but did not receive traffic."
-            )
-
-        print("\nPASS: backend failure and recovery test completed.")
-
-        return 0
-
-    except Exception as exc:
-        print(f"\nFAIL: {exc}", file=sys.stderr)
-        return 1
+        print("\n" + "=" * 60)
+        print("Failure/recovery test: PASS")
+        print("=" * 60)
 
     finally:
-        # Cleanup: make sure the target backend is running again.
-        if target_was_running:
-            print(f"\nCleanup: ensuring {TARGET} is running...")
-
-            try:
-                run_compose("start", TARGET)
-            except Exception as exc:
-                print(
-                    f"WARNING: cleanup failed for {TARGET}: {exc}",
-                    file=sys.stderr,
-                )
+        # Make a best effort to restore app-01 if the script exits unexpectedly.
+        subprocess.run(
+            ["docker", "compose", "start", "app-01"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
